@@ -85,6 +85,15 @@ int __posix_spawn_hook(pid_t *restrict pid, const char *restrict path,
 					   char *const argv[restrict],
 					   char *const envp[restrict])
 {
+	// obl1: our own jail tools are killed by the injection chain (RC=137). Pass them
+	// through untouched — they are jail-native and must run without tweak injection.
+	if (path && (strstr(path, "/usr/local/bin/obl1resetd") ||
+				 strstr(path, "/usr/local/bin/tiletest") ||
+				 strstr(path, "/usr/local/bin/launchapp") ||
+				 strstr(path, "/usr/local/bin/injectd") ||
+				 strstr(path, "/usr/local/bin/locsimd"))) {
+		return __posix_spawn_orig(pid, path, desc, argv, envp);
+	}
 	if (path) {
 		char executablePath[1024];
 		uint32_t bufsize = sizeof(executablePath);
