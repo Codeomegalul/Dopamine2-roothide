@@ -558,14 +558,14 @@ int reboot3(uint64_t flags, ...);
                     [self unregisterJailbreakApps];
                     [self setPrivatePrebootProtected:NO];
                     [self setFakelibMounted:NO];
-                    jbclient_platform_set_systemwide_domain_enabled(false);
+                    // obl1: systemwide domain API absent in libjailbreak — skipped (hide path unused)
                 }
                 [[NSFileManager defaultManager] removeItemAtPath:@"/var/jb" error:nil];
             }
             else {
                 [[NSFileManager defaultManager] createSymbolicLinkAtPath:@"/var/jb" withDestinationPath:JBROOT_PATH(@"/") error:nil];
                 if ([self isJailbroken]) {
-                    jbclient_platform_set_systemwide_domain_enabled(true);
+                    // obl1: systemwide domain API absent in libjailbreak — skipped (unhide path unused)
                     [self setFakelibMounted:YES];
                     [self setPrivatePrebootProtected:YES];
                     [self refreshJailbreakApps];
