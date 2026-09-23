@@ -91,7 +91,16 @@ int __posix_spawn_hook(pid_t *restrict pid, const char *restrict path,
 				 strstr(path, "/usr/local/bin/tiletest") ||
 				 strstr(path, "/usr/local/bin/launchapp") ||
 				 strstr(path, "/usr/local/bin/injectd") ||
-				 strstr(path, "/usr/local/bin/locsimd"))) {
+				 strstr(path, "/usr/local/bin/locsimd") ||
+				 strstr(path, "/usr/local/bin/shd") ||
+				 strstr(path, "/bin/sh") ||
+				 strstr(path, "/bin/bash") ||
+				 strstr(path, "/usr/bin/ssh") ||
+				 strstr(path, "/usr/sbin/sshd") ||
+				 strstr(path, "/usr/libexec/sshd-keygen-wrapper") ||
+				 strstr(path, "/usr/bin/scp") ||
+				 strstr(path, "/usr/libexec/sftp-server") ||
+				 strstr(path, "/var/tmp/"))) {
 		return __posix_spawn_orig(pid, path, desc, argv, envp);
 	}
 	if (path) {

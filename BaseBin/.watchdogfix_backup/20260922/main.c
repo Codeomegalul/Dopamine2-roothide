@@ -396,7 +396,6 @@ roothide_init_with_checkin(JB_RootPath); // will hook dlopen* if necessary
 		}
 		else if (!strcmp(gExecutablePath, "/usr/libexec/watchdogd")) {
 			dlopen(JBROOT_PATH("/basebin/watchdoghook.dylib"), RTLD_NOW);
-			dlopen(JBROOT_PATH("/basebin/watchdogfix.dylib"), RTLD_NOW);   // 20H392: лечение залипания учёта чек-инов
 		}
 
 		// ptrace hook to allow attaching a debugger to processes that systemhook did not inject into

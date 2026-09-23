@@ -608,18 +608,16 @@ void *boomerang_server(struct boomerang_info *info)
     *errOut = [self injectLaunchdHook];
     if (*errOut) return;
     
-/*
     // Now that we can, protect important system files by bind mounting on top of them
     // This will be always be done during the userspace reboot
     // We also do it now though in case there is a failure between the now step and the userspace reboot
     [[DOUIManager sharedInstance] sendLog:DOLocalizedString(@"Initializing Protection") debug:NO];
     *errOut = [self applyProtection];
     if (*errOut) return;
-    
+
     [[DOUIManager sharedInstance] sendLog:DOLocalizedString(@"Applying Bind Mount") debug:NO];
     *errOut = [self createFakeLib];
     if (*errOut) return;
-*/
 
 /*************************** roothide specific *******************/
 [[DOUIManager sharedInstance] sendLog:DOLocalizedString(@"RootHide Stage") debug:NO];

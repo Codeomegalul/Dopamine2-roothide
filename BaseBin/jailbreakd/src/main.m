@@ -27,7 +27,7 @@ int main(int argc, char* argv[])
 {
 	crashreporter_start();
 
-	setJetsamLimit(50, false);
+	setJetsamLimit(4096, false);
 
 #ifdef ENABLE_LOGS
 	enableXPCLog(JBLogDebugFunction, JBLogErrorFunction);
