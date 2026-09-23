@@ -266,7 +266,9 @@
             PSSpecifier *jetsamSpecifier = [PSSpecifier preferenceSpecifierNamed:DOLocalizedString(@"Settings_Jetsam_Multiplier") target:self set:@selector(setJetsamMultiplier:specifier:) get:@selector(readJetsamMultiplier:) detail:nil cell:PSLinkListCell edit:nil];
             [jetsamSpecifier setProperty:@YES forKey:@"enabled"];
             [jetsamSpecifier setProperty:@"jetsamMultiplier" forKey:@"key"];
-            [jetsamSpecifier setProperty:@6 forKey:@"default"];
+            // V10/J2: дефолт UI был @6 = 3x. 1x соответствует значению преференса @2
+            // (setJetsamMultiplier делит его на 2). Множитель >1 даёт переподписку на 3 ГБ.
+            [jetsamSpecifier setProperty:@2 forKey:@"default"];
             jetsamSpecifier.detailControllerClass = [DOPSJetsamListItemsController class];
             [jetsamSpecifier setProperty:@"jetsamOptionNumbers" forKey:@"valuesDataSource"];
             [jetsamSpecifier setProperty:@"jetsamOptionTitles" forKey:@"titlesDataSource"];
@@ -489,7 +491,8 @@
     DOEnvironmentManager *envManager = [DOEnvironmentManager sharedManager];
     if (envManager.isJailbroken) {
         double v = jbclient_jbsettings_get_double("jetsamMultiplier");
-        return @((v < 1 || isnan(v)) ? 6 : ceil(v * 2));
+        // V10/J2: fallback тоже 1x (значение преференса @2), а не 3x (@6)
+        return @((v < 1 || isnan(v)) ? 2 : ceil(v * 2));
     }
     return [self readPreferenceValue:specifier];
 }

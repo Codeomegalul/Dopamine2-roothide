@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <assert.h>
 #include <pthread.h>
+#include <signal.h>
+#include <time.h>
 #include <xpc/xpc.h>
 #include <mach/mach.h>
 #include <bsm/libbsm.h>
@@ -83,7 +85,18 @@ void setJailbreakdProcess(pid_t pid)
 		pid_t oldpid = atoi(pidenv);
 		if(oldpid != pid)
 		{
-			waitpid(oldpid, NULL, 0);
+			//V5/P4: launchd не должен блокироваться здесь бесконечно - старый jailbreakd
+			//может подвиснуть и никогда не завершиться (залипание PID 1 = паника watchdogd)
+			bool reaped = false;
+			for (int i = 0; i < 20; i++) {            // максимум ~2 с
+				if (waitpid(oldpid, NULL, WNOHANG) != 0) { reaped = true; break; }
+				usleep(100 * 1000);
+			}
+			if (!reaped) {
+				JBLogError("old jailbreakd %d did not exit in 2s, killing it", oldpid);
+				kill(oldpid, SIGKILL);                 // гарантируем, что waitpid ниже не повиснет
+				waitpid(oldpid, NULL, 0);
+			}
 			unsetenv("JAILBREAKD_PID");
 		}
 	}
@@ -145,9 +158,17 @@ int spawnJailbreakd()
 
 int initJailbreakd(bool firstLoad)
 {
-	assert(getpid() == 1);
+	//V2/P2: ассерты здесь = SIGABRT в PID 1 = паника ядра (crashreporter.m -> reboot_np).
+	//initJailbreakd теперь вызывается в retry-цикле, поэтому обязан возвращать ошибку.
+	if(getpid() != 1) {
+		JBLogError("initJailbreakd called from pid %d, expected launchd", getpid());
+		return -1;
+	}
 
-	assert(__jailbreakd_initialized == false);
+	if(__jailbreakd_initialized) {
+		//Повторный вызов из retry-цикла: перерегистрация порта безопасна, продолжаем
+		JBLogError("initJailbreakd already initialized, re-attempting spawn");
+	}
 
 	__firstLoad = firstLoad;
 
@@ -163,17 +184,29 @@ int initJailbreakd(bool firstLoad)
 
 mach_port_t reactiveJailbreakdPort()
 {
-/* restarting jailbreakd may cause it to lose its previous internal state, 
-	so we only use it during development. */
-#ifndef ENABLE_LOGS
-	//launchd_panic("jailbreakd crashed");
-	abort();
-#endif
+/* V1/P1: раньше здесь стоял `#ifndef ENABLE_LOGS abort()` - в релизе он недостижимым
+	делал весь recovery-код ниже, поэтому смерть jailbreakd (jetsam/крах) превращалась
+	в панику ядра launchd'ом при первом же jbd-запросе.
+	Теперь: ограниченный бюджет респавнов + мягкая деградация (MACH_PORT_NULL). */
+
+	static uint32_t restarts_in_window = 0;
+	static time_t window_start = 0;
+
+	time_t now = time(NULL);
+	if (now - window_start > 300) { window_start = now; restarts_in_window = 0; }
+	if (++restarts_in_window > 5) {
+		//Не паникуем и не долбим респавном: отдаём мёртвый порт, клиенты получат ошибку
+		JBLogError("jailbreakd restart budget exhausted (%u in 300s)", restarts_in_window);
+		return MACH_PORT_NULL;
+	}
 
 	assert(getpid() == 1);
 
 	//prevent jailbreakdClientPort from calling before initJailbreakd
-	assert(__jailbreakd_initialized);
+	if (!__jailbreakd_initialized) {
+		JBLogError("jailbreakd port requested before init");
+		return MACH_PORT_NULL;
+	}
 
 	mach_port_t port = MACH_PORT_NULL;
 
@@ -188,8 +221,10 @@ mach_port_t reactiveJailbreakdPort()
 	}
 	else
 	{
-		//make jailbreakd crashes perceptible
-		sleep(5);
+		JBLogError("jailbreakd died (kr=%x,%s), restarting", kr, mach_error_string(kr));
+
+		//V5/P4: было sleep(5) - 5 секунд блокировки обработки запросов launchd'а
+		usleep(200 * 1000);
 
 		//register server port before spawn jailbreakd
 		if(registerServerPort() == 0)
@@ -218,6 +253,7 @@ mach_port_t reactiveJailbreakdPort()
 
 	pthread_mutex_unlock(&mutex);
 
+	//MACH_PORT_NULL = мягкая деградация, вызывающие уже обрабатывают его как ошибку
 	return port;
 }
 

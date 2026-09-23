@@ -3,6 +3,8 @@
 //
 
 #include <sys/event.h>
+#include <errno.h>
+#include <unistd.h>
 #import <Foundation/Foundation.h>
 
 #include "../libjailbreak.h"
@@ -20,8 +22,23 @@ void event_handler(int kq)
     {
         struct kevent event = {0};
         int ret = kevent(kq, NULL, 0, &event, 1, NULL);
-        assert(ret == 1);
-        assert(event.filter == EVFILT_PROC);
+        //V6/P7: ассерты в while(true) роняли launchd; EINTR/EBADF/гонка при выходе
+        //процесса - штатные ситуации, а не повод для паники PID 1
+        if (ret != 1) {
+            JBLogError("[execPatch] kevent ret=%d errno=%d", ret, errno);
+            if (ret < 0 && errno == EBADF) {
+                // очередь мертва/переиспользована - пересоздаём, иначе поток крутится вхолостую
+                int newkq = kqueue();
+                if (newkq == -1) return;
+                kq = newkq;
+            }
+            usleep(10 * 1000);
+            continue;
+        }
+        if (event.filter != EVFILT_PROC) {
+            JBLogError("[execPatch] unexpected kevent filter: %d", event.filter);
+            continue;
+        }
 
         pid_t pid = (pid_t)event.ident;
 

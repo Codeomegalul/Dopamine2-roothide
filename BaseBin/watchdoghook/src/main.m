@@ -242,8 +242,20 @@ kern_return_t IOConnectCallStructMethod_hook(mach_port_t connection, uint32_t se
 			int r = jbclient_watchdog_intercept_userspace_panic(message);
 			if (r == 0) {
 				reboot3(RB2_USERREBOOT);
+				// Вернулся — значит ребут НЕ состоялся: отдаём панику штатному пути,
+				// чтобы устройство ушло в обычный panic-ребут с логом, а не в тихий висяк.
+				wdhLog("reboot3 returned: passing panic through to watchdogd");
+			} else {
+				// W2/H2/V14: jbserver недоступен. НИКОГДА не возвращать ненулевой код —
+				// по дизасму 0x100005704 это __os_crash внутри watchdogd -> паника SoC.
+				wdhLog("intercept failed (%d): passing panic through to watchdogd", r);
 			}
-			return r;
+			if (!IOConnectCallStructMethod_orig) {
+				// Оригинал не захукался (W5): держим панику вместо краха watchdogd
+				wdhLog("original IOConnectCallStructMethod is NULL, holding panic");
+				return 0;
+			}
+			return IOConnectCallStructMethod_orig(connection, selector, inputStruct, inputStructCnt, outputStruct, outputStructCnt);
 		}
 	}
 	return IOConnectCallStructMethod_orig(connection, selector, inputStruct, inputStructCnt, outputStruct, outputStructCnt);

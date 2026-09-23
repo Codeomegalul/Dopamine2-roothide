@@ -798,8 +798,11 @@ void loadAppStoredIdentifiers()
     NSError *error = nil;
     NSArray *appContainers = [fileManager contentsOfDirectoryAtPath:applicationsPath error:&error];
     if (error) {
+        //V6/P7: abort() здесь = паника launchd на каждом инжекте (MCM не поднят, отказ прав).
+        //Список используется только для blacklist-логики, пустой безопасен.
         JBLogError("Error reading Application directory: %s", error.description.UTF8String);
-        abort();
+        StoredAppIdentifiers = [NSMutableArray array];
+        return;
     }
     
     for (NSString *containerUUID in appContainers) 
@@ -949,7 +952,8 @@ bool is_safe_bundle_identifier(const char* identifier)
         return false;
     }
 
-    assert(StoredAppIdentifiers != nil);
+    //V6/P7: ассерт был парным к abort() в loadAppStoredIdentifiers()
+    if (StoredAppIdentifiers == nil) StoredAppIdentifiers = [NSMutableArray array];
     if([StoredAppIdentifiers containsObject:@(identifier)]) {
         return true;
     }

@@ -142,8 +142,9 @@ int task_set_dyld_info(uint64_t task, uint64_t addr, uint64_t size)
     });
 
     if(all_image_info_addr_offset==0 || all_image_info_size_offset==0) {
+        //V6/P7: abort() = SIGABRT в launchd/jailbreakd -> паника. Вызывающие уже умеют
+        //обработать -1 (смена layout task/dyld в 20H392 - не повод ронять систему).
         JBLogError("invalid all_image_info_addr/size offset");
-        abort();
         return -1;
     }
 
@@ -152,7 +153,6 @@ int task_set_dyld_info(uint64_t task, uint64_t addr, uint64_t size)
         kwritebuf(task + info_offset, info, sizeof(info));
     } else if(task != proc_task(proc_find(1))) {
         JBLogError("invalid info offset");
-        abort();
         return -1;
     }
 

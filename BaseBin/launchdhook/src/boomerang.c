@@ -9,6 +9,7 @@
 #include <libjailbreak/kcall_Fugu14.h>
 #include <libjailbreak/kcall_arm64.h>
 #include <unistd.h>
+#include <signal.h>
 
 int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, mach_port_t portarray[], uint32_t count);
 
@@ -26,7 +27,10 @@ void boomerang_stashPrimitives()
 	mach_port_insert_right(mach_task_self(), serverPort, serverPort, MACH_MSG_TYPE_MAKE_SEND);
 
 	// Small server provided to boomerang to obtain exploit primitives
-	dispatch_source_t serverSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, (uintptr_t)serverPort, 0, dispatch_get_main_queue());
+	//V5/P4: обработчик обязан жить на приватной очереди - на main queue он не мог
+	//выполниться, пока поток launchd заблокирован в dispatch_semaphore_wait ниже
+	dispatch_queue_t boomerangQueue = dispatch_queue_create("obl1.boomerang", DISPATCH_QUEUE_SERIAL);
+	dispatch_source_t serverSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, (uintptr_t)serverPort, 0, boomerangQueue);
 	dispatch_source_set_event_handler(serverSource, ^{
 		xpc_object_t xdict = NULL;
 		if (!xpc_pipe_receive(serverPort, &xdict)) {
@@ -48,14 +52,27 @@ void boomerang_stashPrimitives()
 	posix_spawnattr_destroy(&attr);
 
 	// Wait for boomerang to retrieve the primitives from launchd (handled in server above)
-	dispatch_semaphore_wait(boomerangDone, DISPATCH_TIME_FOREVER);
+	//V5/P4: раньше здесь было DISPATCH_TIME_FOREVER - подвисший boomerang вешал поток
+	//spawn-пути launchd навсегда (нет чек-инов -> userspace-паника watchdogd)
+	dispatch_time_t deadline = dispatch_time(DISPATCH_TIME_NOW, (int64_t)10 * NSEC_PER_SEC);
+	if (dispatch_semaphore_wait(boomerangDone, deadline) != 0) {
+		JBLogError("boomerang did not finish in 10s, killing it and continuing");
+		if (boomerangPid > 0) {
+			kill(boomerangPid, SIGKILL);
+			waitpid(boomerangPid, NULL, WNOHANG);
+			boomerangPid = 0;
+		}
+		setenv("OBL1_BOOMERANG_TIMEOUT", "1", 1);
+	}
 	dispatch_source_cancel(serverSource);
 	mach_port_deallocate(mach_task_self(), serverPort);
 
 	// Stash boomerang pid in environment to later be able to call waitpid on it
-	char pidBuf[10];
-	snprintf(pidBuf, 10, "%d", boomerangPid);
-	setenv("BOOMERANG_PID", pidBuf, 1);
+	if (boomerangPid > 0) {
+		char pidBuf[10];
+		snprintf(pidBuf, 10, "%d", boomerangPid);
+		setenv("BOOMERANG_PID", pidBuf, 1);
+	}
 }
 
 int boomerang_recoverPrimitives(bool firstRetrieval, bool shouldEndBoomerang)
@@ -91,10 +108,19 @@ int boomerang_recoverPrimitives(bool firstRetrieval, bool shouldEndBoomerang)
 		jbclient_boomerang_done();
 
 		// Remove boomerang zombie proc if needed
+		//V5/P4: два блокирующих waitpid подряд вешали ранний бут, если boomerang не выходил
 		if (boomerangPid != 0) {
 			int boomerangStatus;
-			waitpid(boomerangPid, &boomerangStatus, WEXITED);
-			waitpid(boomerangPid, &boomerangStatus, 0);
+			int reaped = 0;
+			for (int i = 0; i < 20; i++) {            // максимум ~2 с
+				if (waitpid(boomerangPid, &boomerangStatus, WNOHANG) != 0) { reaped = 1; break; }
+				usleep(100 * 1000);
+			}
+			if (!reaped) {
+				JBLogError("boomerang %d did not exit after DONE, killing it", boomerangPid);
+				kill(boomerangPid, SIGKILL);
+				waitpid(boomerangPid, &boomerangStatus, 0);
+			}
 		}
 	}
 

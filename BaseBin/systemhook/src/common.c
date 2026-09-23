@@ -92,6 +92,17 @@ int __execve_orig(const char *path, char *const argv[], char *const envp[])
 // 2. Insert "DYLD_INSERT_LIBRARIES=/usr/lib/systemhook.dylib" into all binaries spawned
 // 3. Increase Jetsam limit to more sane value (Multipler defined as JETSAM_MULTIPLIER)
 
+// J2/V10: множитель без верхней границы превращает MemoryLimit=1024 в 3072 МБ
+// при 3072 МБ физической памяти. Зажимаем результат до ~25% RAM устройства.
+static int clamp_memlimit(int value, double mult)
+{
+	if (value <= 0) return value;                    // 0/-1 = «без лимита», не трогаем
+	long long scaled = (long long)(value * mult);
+	long long cap = 768;                             // ~25% от 3 ГБ; для 4+ ГБ устройств поднимать
+	if (scaled > cap) scaled = cap;
+	return (int)scaled;
+}
+
 static int spawn_exec_hook_common(const char *path,
 								  char *const argv[restrict],
 								  char *const envp[restrict],
@@ -175,15 +186,18 @@ static int spawn_exec_hook_common(const char *path,
 	if (shouldInsertJBEnv) {
 		uint8_t *attrStruct = (uint8_t *)attr;
 		if (attrStruct) {
-			if (jetsamMultiplier == 0 || isnan(jetsamMultiplier)) jetsamMultiplier = 3; // default value (3x)
+			// V10: дефолт был 3x — на 3 ГБ это переподписка (mediaserverd 1600->4800,
+			// SpringBoard 330->990) и отказ jetsam убивать вовремя. Дефолт 1x = лимиты
+			// из plist остаются как есть (блок ниже не применяется).
+			if (jetsamMultiplier == 0 || isnan(jetsamMultiplier)) jetsamMultiplier = 1; // default value (1x)
 			if (jetsamMultiplier > 1) {
 				int memlimit_active = *(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE);
 				if (memlimit_active != -1) {
-					*(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE) = memlimit_active * jetsamMultiplier;
+					*(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE) = clamp_memlimit(memlimit_active, jetsamMultiplier);
 				}
 				int memlimit_inactive = *(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE);
 				if (memlimit_inactive != -1) {
-					*(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE) = memlimit_inactive * jetsamMultiplier;
+					*(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE) = clamp_memlimit(memlimit_inactive, jetsamMultiplier);
 				}
 			}
 		}

@@ -3,6 +3,7 @@
 #include <mach-o/dyld.h>
 #include <libproc.h>
 #include <spawn.h>
+#include <errno.h>
 
 #include <libjailbreak/libjailbreak.h>
 #include <libjailbreak/roothider.h>
@@ -18,7 +19,11 @@ void setJetsamLimit(uint32_t sizeInMB, bool is_fatal_limit)
 {
 	uint32_t cmd = is_fatal_limit ? MEMORYSTATUS_CMD_SET_JETSAM_TASK_LIMIT : MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK;
 	int rc = memorystatus_control(cmd, getpid(), sizeInMB, NULL, 0);
-	if (rc < 0) { perror ("memorystatus_control"); exit(rc);}
+	//J1: отказ syscall'а не должен убивать демон - поднятие лимита это защита,
+	//а не условие работоспособности (exit здесь = тихая смерть jailbreakd -> V1)
+	if (rc < 0) {
+		JBLogError("memorystatus_control(cmd=%u, %u) failed: %d (%s)", cmd, sizeInMB, rc, strerror(errno));
+	}
 }
 
 void enableXPCLog(void* debugLog, void* errorLog);
@@ -27,7 +32,9 @@ int main(int argc, char* argv[])
 {
 	crashreporter_start();
 
-	setJetsamLimit(4096, false);
+	//V13/J1: было 4096 (= снятый лимит на 3 ГБ RAM: утечка не наказывается, а съедает
+	//устройство). 512 = запас 3.5x от измеренного пика 145 МБ. Возврат к 50 НЕ делать.
+	setJetsamLimit(512, false);
 
 #ifdef ENABLE_LOGS
 	enableXPCLog(JBLogDebugFunction, JBLogErrorFunction);

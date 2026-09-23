@@ -169,7 +169,21 @@ void roothide_launchd_postinit(bool firstLoad)
 	MSHookFunction(&xpc_pipe_routine_reply, (void*)new_xpc_pipe_routine_reply, &orig_xpc_pipe_routine_reply);
 
 	// load jailbreakd after applying hooks
-	assert(initJailbreakd(firstLoad) == 0);
+	//V2/P2: ассерт жив в релизе, а его нарушение в PID 1 = SIGABRT -> crashreporter -> reboot_np -> паника.
+	//Вместо него - retry и деградированный режим: систему не роняем.
+	int jbdRet = -1;
+	for (int attempt = 0; attempt < 3; attempt++) {
+		jbdRet = initJailbreakd(firstLoad && attempt == 0);
+		if (jbdRet == 0) break;
+		JBLogError("initJailbreakd attempt %d failed: %d", attempt, jbdRet);
+		usleep(300 * 1000);
+	}
+	if (jbdRet != 0) {
+		//jailbreakd недоступен в этой загрузке: jbserver-запросы будут возвращать ошибку
+		//до следующего userspace-ребута, паники при этом не будет
+		JBLogError("jailbreakd unavailable this boot, continuing without it");
+		setenv("OBL1_JAILBREAKD_DOWN", "1", 1);
+	}
 }
 
 #include <dlfcn.h>
@@ -178,11 +192,19 @@ void fix__iosConnect()
 {
     MSImageRef IOSurfaceImage = MSGetImageByName("/System/Library/Frameworks/IOSurface.framework/IOSurface");
     JBLogDebug("IOSurfaceImage=%p\n", IOSurfaceImage);
-    assert(IOSurfaceImage != NULL);
+    //V6/P7: ассерты в этой функции срабатывали при первом spawn App Store-приложения
+    //и роняли launchd -> паника ядра. Заменены мягкими проверками с выходом.
+    if (IOSurfaceImage == NULL) {
+        JBLogError("fix__iosConnect: IOSurface image not found, skipping");
+        return;
+    }
 
     io_service_t* __iosService = MSFindSymbol(IOSurfaceImage, "__iosService");
     io_connect_t* __iosConnect = MSFindSymbol(IOSurfaceImage, "__iosConnect");
-    assert(__iosService != NULL && __iosConnect != NULL);
+    if (__iosService == NULL || __iosConnect == NULL) {
+        JBLogError("fix__iosConnect: __iosService/__iosConnect not found (service=%p connect=%p), skipping", __iosService, __iosConnect);
+        return;
+    }
 
     JBLogDebug("__iosService=%p __iosConnect=%p\n", __iosService, __iosConnect);
     JBLogDebug("*__iosService=%d *__iosConnect=%d\n", *__iosService, *__iosConnect);
@@ -192,20 +214,31 @@ void fix__iosConnect()
 
     *(void **)&IOServiceOpen = dlsym(RTLD_DEFAULT, "IOServiceOpen");
     *(void **)&IOServiceClose = dlsym(RTLD_DEFAULT, "IOServiceClose");
-    assert(IOServiceOpen != NULL && IOServiceClose != NULL);
+    if (IOServiceOpen == NULL || IOServiceClose == NULL) {
+        JBLogError("fix__iosConnect: IOServiceOpen/IOServiceClose not resolvable, skipping");
+        return;
+    }
     
     io_connect_t old__iosConnect = *__iosConnect;
 
     if(old__iosConnect) {
 
-        assert(*__iosService != 0);
+        if (*__iosService == 0) {
+            JBLogError("fix__iosConnect: *__iosService is 0, skipping");
+            return;
+        }
 
         kern_return_t kr = IOServiceOpen(*__iosService, mach_task_self(), 0, __iosConnect);
         JBLogDebug("IOServiceOpen kr=%x, new iosConnect=%d\n", kr, *__iosConnect);
-        assert(kr == KERN_SUCCESS);
+        if (kr != KERN_SUCCESS) {
+            JBLogError("fix__iosConnect: IOServiceOpen failed kr=%x", kr);
+            return;
+        }
 
         kr = IOServiceClose(old__iosConnect);
-        assert(kr == KERN_SUCCESS);
+        if (kr != KERN_SUCCESS) {
+            JBLogError("fix__iosConnect: IOServiceClose failed kr=%x", kr);
+        }
     }
 }
 
