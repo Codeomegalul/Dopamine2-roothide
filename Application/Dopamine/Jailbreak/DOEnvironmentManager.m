@@ -514,7 +514,7 @@ int reboot3(uint64_t flags, ...);
     }
 }
 
-/*
+
 - (BOOL)isFakelibMounted
 {
     struct statfs fsb;
@@ -583,7 +583,7 @@ int reboot3(uint64_t flags, ...);
         actionBlock();
     }
 }
-*/
+
 
 - (NSString *)accessibleKernelPath
 {

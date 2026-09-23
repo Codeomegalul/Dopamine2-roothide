@@ -405,7 +405,7 @@ void *boomerang_server(struct boomerang_info *info)
     return nil;
 }
 
-/*
+
 - (NSError *)applyProtection
 {
     int r = [[DOEnvironmentManager sharedManager] setPrivatePrebootProtected:YES];
@@ -448,7 +448,7 @@ void *boomerang_server(struct boomerang_info *info)
     setenv("DYLD_INSERT_LIBRARIES", "/usr/lib/systemhook.dylib", 1);
     return nil;
 }
-*/
+
 
 - (NSError *)ensureNoDuplicateApps
 {
