@@ -12,6 +12,10 @@
 //void abort_with_reason(uint32_t reason_namespace, uint64_t reason_code, const char *reason_string, uint64_t reason_flags);
 #define abort_with_reason(reason_namespace,reason_code,reason_string,reason_flags)  launchd_panic("%s",reason_string)
 
+//P3: abort_with_reason в этом файле больше не используется - все паники переведены на
+//JBLogError + мягкий выход (см. комментарии [P3] в jbupdate_* ниже). Макрос оставлен,
+//чтобы случайное новое использование не осталось незамеченным при ревью diff'а.
+
 int jbupdate_basebin(const char *basebinTarPath)
 {
 	@autoreleasepool {
@@ -101,9 +105,12 @@ void jbupdate_update_system_info(void)
 		// Load XPF
 		void *xpfHandle = dlopen("@loader_path/libxpf.dylib", RTLD_NOW);
 		if (!xpfHandle) {
+			//P3: было abort_with_reason (SIGABRT в PID1 -> crashreporter -> reboot_np(RB_PANIC) -> ядерная
+			//паника). Обновление system info не удалось - это деградация, а не повод ронять устройство.
 			char msg[4000];
 			snprintf(msg, 4000, "Dopamine: dlopening libxpf failed: (%s), cannot continue.", dlerror());
-			abort_with_reason(7, 1, msg, 0);
+			JBLogError("%s", msg);
+			setenv("OBL1_NO_PRIMITIVES", "1", 1);
 			return;
 		}
 		int (*xpf_start_with_kernel_path)(const char *kernelPath) = dlsym(xpfHandle, "xpf_start_with_kernel_path");
@@ -168,9 +175,12 @@ sets[idx] = NULL;
 		}
 
 		if (error) {
+			//P3: было abort_with_reason -> ядерная паника. Дальше идти нельзя (смещение/патчи не собраны),
+			//но ронять устройство из-за неудачного patchfinder'а - хуже: мягкий выход без пересборки info.
 			char msg[4000];
 			snprintf(msg, 4000, "Dopamine: Updating system info via XPF failed with error: (%s), cannot continue.", error);
-			abort_with_reason(7, 1, msg, 0);
+			JBLogError("%s", msg);
+			setenv("OBL1_NO_PRIMITIVES", "1", 1);
 			return;
 		}
 
@@ -228,9 +238,12 @@ void jbupdate_finalize_stage2(const char *prevVersion, const char *newVersion)
 	// Update patched dyld
 	int r = basebin_generate(YES);
 	if (r != 0) {
+		//P3: было abort_with_reason -> ядерная паника. Патченный dyld не собрался: продолжаем без него,
+		//старый dyld остаётся на месте (генерируемый файл пишется через временный + rename).
 		char msg[4000];
 		snprintf(msg, 4000, "Dopamine: Updating patched dyld failed with error %d, cannot continue.", r);
-		abort_with_reason(7, 1, msg, 0);
+		JBLogError("%s", msg);
+		setenv("OBL1_NO_PRIMITIVES", "1", 1);
 	}
 
 	// Update dyld trustcache
@@ -239,25 +252,33 @@ void jbupdate_finalize_stage2(const char *prevVersion, const char *newVersion)
 	file_collect_untrusted_cdhashes_by_path(JBROOT_PATH("/basebin/.fakelib/dyld"), &cdhashes, &cdhashesCount);
 
 	if (cdhashesCount > 1) {
+		//P3: было abort_with_reason -> ядерная паника. Неожиданное число cdhash (обычно следствие
+		//предыдущего мягкого отказа) - логируем и не трогаем trustcache dyld.
 		char msg[4000];
 		snprintf(msg, 4000, "Dopamine: Updating patched dyld failed due to unexpected amount of cdhashes (%d), cannot continue.", cdhashesCount);
-		abort_with_reason(7, 1, msg, 0);
+		JBLogError("%s", msg);
+		setenv("OBL1_NO_PRIMITIVES", "1", 1);
 	}
 	else if (cdhashesCount == 1) {
 		trustcache_file_v1 *dyldTCFile = NULL;
 		r = trustcache_file_build_from_cdhashes(cdhashes, cdhashesCount, &dyldTCFile);
 		free(cdhashes);
 		if (r != 0) {
+			//P3: было abort_with_reason -> ядерная паника на неудачной сборке trustcache-файла.
 			char msg[4000];
 			snprintf(msg, 4000, "Dopamine: Building dyld trustcache failed with error %d, cannot continue.", r);
-			abort_with_reason(7, 1, msg, 0);
+			JBLogError("%s", msg);
+			setenv("OBL1_NO_PRIMITIVES", "1", 1);
 		}
 
 		r = trustcache_file_upload_with_uuid(dyldTCFile, DYLD_TRUSTCACHE_UUID);
 		if (r != 0) {
+			//P3: было abort_with_reason -> ядерная паника. Загрузка trustcache требует kcall; если
+			//примитивов нет (см. main.m P3-деградацию), это ожидаемый отказ, а не повод ронять систему.
 			char msg[4000];
 			snprintf(msg, 4000, "Dopamine: Updating dyld trustcache failed with error %d, cannot continue.", r);
-			abort_with_reason(7, 1, msg, 0);
+			JBLogError("%s", msg);
+			setenv("OBL1_NO_PRIMITIVES", "1", 1);
 		}
 
 		free(dyldTCFile);

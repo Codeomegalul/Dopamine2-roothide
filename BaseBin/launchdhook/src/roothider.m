@@ -116,7 +116,11 @@ void roothide_launchd_postinit(bool firstLoad)
 		if (!__builtin_available(iOS 16.0, *))
 		{
 			if(roothide_config_set_spinlock_fix(dyld_patch_enabled()) != 0) {
-				launchd_panic("roothide_config_set_spinlock_fix failed");
+				//P3: было launchd_panic -> reboot_np(RB_PANIC) -> ядерная паника прямо на загрузке.
+				//Спинлок-фикс нужен только iOS15 arm64e; на не-исправленном ядре это отказ
+				//конфигурации, а не повреждение диска. Деградируем: система загрузится без фикса.
+				JBLogError("P3: roothide_config_set_spinlock_fix failed, continuing without it");
+				setenv("OBL1_SPINLOCK_FIX_FAILED", "1", 1);
 				return;
 			}
 		}
@@ -158,8 +162,13 @@ void roothide_launchd_postinit(bool firstLoad)
 	{
 		int ret = ensure_dyld_trustcache(JBROOT_PATH("/basebin/.fakelib/dyld"));
 		if (ret != 0) {
-			launchd_panic("ensure dyld trustcache failed: %d", ret);
-			return;
+			//P3: было launchd_panic -> reboot_np(RB_PANIC) -> ядерная паника на userspace-ребуте.
+			//Отказ сюда приходит штатно в гонке: загрузка dyld-trustcache идёт через kcall
+			//(trustcache_file_upload_with_uuid), а примитивы к этому моменту могут быть недоступны
+			//или cdhash диска не совпасть. Деградируем: хуки ставим, доверие к dyld не обновляем.
+			JBLogError("P3: ensure dyld trustcache failed: %d, continuing without trustcache update", ret);
+			setenv("OBL1_DYLD_TC_FAILED", "1", 1);
+			//NOTE: без этой проверки upstream паниковал устройство; сознательно НЕ паникуем.
 		}
 	}
 

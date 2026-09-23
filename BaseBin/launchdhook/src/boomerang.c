@@ -101,7 +101,11 @@ int boomerang_recoverPrimitives(bool firstRetrieval, bool shouldEndBoomerang)
 	// Handing off full physrw from the app is really slow and causes watchdog timeouts
 	// But from launchd it's generally fine, no clue why
 	bool physrwPTE = firstRetrieval && !is_kcall_available();
-	jbclient_initialize_primitives_internal(physrwPTE);
+	//P3: возврат этой функции раньше игнорировался, а она отдаёт -1, если boomerang не ответил
+	//(OBL1_BOOMERANG_TIMEOUT: процесс убит, порт мёртв). Тогда launchd продолжал работу с пустыми
+	//примитивами и падал позже в неожиданном месте. Теперь это явная деградация для вызывающего.
+	int primRet = jbclient_initialize_primitives_internal(physrwPTE);
+	JBLogError("boomerang_recoverPrimitives: primitives init ret=%d (physrwPTE=%d)", primRet, physrwPTE);
 
 	if (shouldEndBoomerang) {
 		// Send done message to boomerang
@@ -124,5 +128,11 @@ int boomerang_recoverPrimitives(bool firstRetrieval, bool shouldEndBoomerang)
 		}
 	}
 
-	return 0;
+	return primRet == 0 ? 0 : -3;
 }
+
+//P3: коды возврата boomerang_recoverPrimitives, которые различает main.m:
+//  -1 mach_ports_lookup не удался / портов меньше трёх
+//  -2 порт boomerang уже израсходован (MACH_PORT_NULL) - именно этот случай раньше давал
+//     launchd_panic на каждом userspace-ребуте
+//  -3 boomerang отдал DONE, но примитивы не инициализировались (его убили по таймауту)

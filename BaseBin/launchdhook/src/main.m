@@ -24,6 +24,10 @@
 
 bool gInEarlyBoot = true;
 
+//P3: признак "шли в деградированном режиме" - примитивы не были отданы boomerang'ом.
+//Используется spawn-хуком и roothider.m, чтобы не строить хуки поверх неработающих примитивов.
+bool gOBL1NoPrimitives = false;
+
 //void abort_with_reason(uint32_t reason_namespace, uint64_t reason_code, const char *reason_string, uint64_t reason_flags);
 #define abort_with_reason(reason_namespace,reason_code,reason_string,reason_flags)  launchd_panic("%s",reason_string)
 void roothide_launchd_preinit();
@@ -134,10 +138,26 @@ __attribute__((constructor)) static void initializer(void)
 
 	int err = boomerang_recoverPrimitives(firstLoad, true);
 	if (err != 0) {
+		//P3: раньше здесь стоял abort_with_reason -> launchd_panic -> reboot_np(RB_QUICK|RB_PANIC) ->
+		//ЯДЕРНАЯ паника всего устройства на КАЖДОМ userspace-ребуте, где boomerang не отдал примитивы
+		//(в частности после срабатывания OBL1_BOOMERANG_TIMEOUT: boomerang убит, его порт мёртв,
+		//повторный recover возвращает -2/-3). Устройство уходило в цикл ребутов.
+		//Теперь: помечаем деградацию, пишем маркер в лог/окружение и продолжаем штатный спавн
+		//БЕЗ roothide-хуков. Джейлбрейк в этой загрузке не работает, но система жива и доступна.
 		char msg[1000];
-		snprintf(msg, 1000, "Dopamine: Failed to recover primitives (error %d), cannot continue.", err);
-		abort_with_reason(7, 1, msg, 0);
+		snprintf(msg, 1000, "Dopamine: Failed to recover primitives (error %d), continuing in degraded no-primitives mode.", err);
+		setenv("OBL1_NO_PRIMITIVES", "1", 1);
+		gOBL1NoPrimitives = true;
+		JBLogError("%s", msg);
+		if (getenv("OBL1_BOOMERANG_TIMEOUT")) {
+			JBLogError("degradation cause: boomerang timeout (boomerang killed before handoff)");
+		}
+		//stage2 (обновление system info / патченного dyld через kcall) без примитивов невозможна и
+		//сама по себе паникует - в деградированном режиме её не трогаем, JBUPDATE_* остаются в environ
 		return;
+	}
+	else {
+		unsetenv("OBL1_NO_PRIMITIVES");
 	}
 
 	if (jbupdatePrevVersion && jbupdateNewVersion) {

@@ -137,9 +137,29 @@ int __posix_spawn_hook(pid_t *restrict pid, const char *restrict path,
 			if (stagedJailbreakUpdate) {
 				int r = jbupdate_basebin(stagedJailbreakUpdate);
 				if (r != 0) {
+					//[P3] решение: паника убрана. Прежний abort_with_reason = launchd_panic = ядерная
+					//паника; при этом сам STAGED_JAILBREAK_UPDATE не снимался, значит следующая
+					//userspace-загрузка повторяла ту же попытку и падала снова - это и есть
+					//бесконечный цикл ребутов с полужизнью джейлбрейка, от которого нас просили уйти.
+					//Теперь: снимаем STAGED_JAILBREAK_UPDATE ДО паники-пути, ставим маркер, логируем и
+					//продолжаем userspace-ребут. База остаётся в том состоянии, в котором её оставила
+					//частичная распаковка, но система загружается -> джейлбрейк можно переставить вручную.
+					//Безопасно, потому что jbupdate_basebin меняет только <jbroot>/basebin, а
+					//рантайм-версия (.version) проверяется в jbupdate_finalize_stage2 (она не поедет).
 					char msg[1000];
-					snprintf(msg, 1000, "Failed updating basebin (error %d).", r);
-					abort_with_reason(7, 1, msg, 0);
+					snprintf(msg, 1000, "Failed updating basebin (error %d), skipping staged jailbreak update.", r);
+					JBLogError("%s", msg);
+					setenv("OBL1_JBUPDATE_FAILED", "1", 1);
+					remove("/var/mobile/obl1_jbupdate_failed");
+					FILE *failMark = fopen("/var/mobile/obl1_jbupdate_failed", "w");
+					if (failMark) {
+						fprintf(failMark, "%s", stagedJailbreakUpdate);
+						fclose(failMark);
+					}
+				}
+				else {
+					remove("/var/mobile/obl1_jbupdate_failed");
+					unsetenv("OBL1_JBUPDATE_FAILED");
 				}
 				unsetenv("STAGED_JAILBREAK_UPDATE");
 			}
